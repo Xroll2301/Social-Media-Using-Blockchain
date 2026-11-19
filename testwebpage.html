@@ -1,0 +1,18 @@
+async function loadPosts() {
+  const res = await fetch("/get_chain");
+  if (res.ok) {
+    const data = await res.json();
+    console.log(data); // Debugging line to check the fetched posts
+    const posts = data.chain;
+    posts.reverse().forEach(post => {
+      const postHTML = `<div class="post list-group-item">
+        <strong>${post.username || 'Anonymous'}</strong> added post: ${post.ipfs_cid || 'No Media'} (Block #${post.block_index})<br>
+        <p>${post.text || ''}</p>
+        ${renderMedia(post.ipfs_cid)}
+      </div>`;
+      document.getElementById("posts-container").innerHTML += postHTML;
+    });
+  } else {
+    console.error("Failed to load posts");
+  }
+}

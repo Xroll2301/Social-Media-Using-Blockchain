@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>BlockConnect - Decentralized Social Media</title>
+
+  <!-- Bootstrap CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.min.js"></script>
+</head>
+<body class="bg-light">
+
+  <div class="container mt-5">
+    <header class="text-center mb-4">
+      <h1>🧱 BlockConnect</h1>
+      <p>The future of decentralized social media.</p>
+    </header>
+
+    <section id="user-actions" class="text-center mb-4">
+      <span id="welcomeMsg" class="d-block mb-3"></span>
+      <button id="logoutBtn" class="btn btn-danger mb-2" onclick="logoutUser()" style="display: none;">Logout</button>
+    </section>
+
+    <section id="feed">
+      <h2 class="text-center mb-3">📜 Recent Posts</h2>
+
+      <!-- Post input section -->
+      <section id="post-section" style="display: none;">
+        <textarea id="postText" class="form-control mb-2" placeholder="Write something..." rows="3"></textarea>
+        <input type="file" id="fileInput" style="display: none;" onchange="handleFileChosen()" />
+        <button class="btn btn-info" onclick="document.getElementById('fileInput').click()">Choose Media</button>
+        <span id="fileName" class="ms-3" style="font-style: italic;"></span>
+        <div>
+          <button class="btn btn-primary" onclick="uploadFile()">Upload Media</button>
+          <button class="btn btn-secondary" onclick="addPost()">Add Post</button>
+        </div>
+      </section>
+
+      <div id="posts-container" class="list-group mt-3"></div>
+    </section>
+  </div>
+
+  <!-- Bootstrap JS and Popper -->
+  <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.11.6/dist/umd/popper.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.0/dist/js/bootstrap.min.js"></script>
+
+  <script>
+    const socket = io("http://127.0.0.1:5001");
+
+    let currentUser = null;
+    let uploadedCid = null;
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      const storedUser = localStorage.getItem("currentUser");
+
+      if (!storedUser) {
+        // Redirect if user not logged in
+        window.location.href = "/";
+        return;
+      }
+
+      currentUser = storedUser;
+
+      document.getElementById("welcomeMsg").textContent = `👋 Welcome, ${currentUser}`;
+      document.getElementById("post-section").style.display = "block";
+      document.getElementById("logoutBtn").style.display = "inline-block";
+
+      await loadPosts();
+    });
+
+    async function loadPosts() {
+  const res = await fetch("/get_chain");
+  if (res.ok) {
+    const data = await res.json();
+    console.log(data); // Debugging line to check the fetched posts
+    const posts = data.chain;
+    posts.reverse().forEach(post => {
+      const postHTML = `<div class="post list-group-item">
+        <strong>${post.username || 'Anonymous'}</strong> added post: ${post.ipfs_cid || 'No Media'} (Block #${post.block_index})<br>
+        <p>${post.text || ''}</p>
+        ${renderMedia(post.ipfs_cid)}
+      </div>`;
+      document.getElementById("posts-container").innerHTML += postHTML;
+    });
+  } else {
+    console.error("Failed to load posts");
+  }
+}
+
+    socket.on("connect", () => {
+      console.log("Connected to the blockchain network.");
+    });
+
+    socket.on("new_post", (data) => {
+  const postHTML = `<div class="post list-group-item">
+    <strong>${data.username || 'Anonymous'}</strong> added post: ${data.ipfs_cid || 'No Media'} (Block #${data.block_index})<br>
+    <p>${data.text || ''}</p>
+    ${renderMedia(data.ipfs_cid)}
+  </div>`;
+  const container = document.getElementById("posts-container");
+  container.innerHTML = postHTML + container.innerHTML;  // prepend instead of append
+});
+
+
+    async function logoutUser() {
+      await fetch("/logout");
+      currentUser = null;
+      localStorage.removeItem("currentUser");
+      alert("Logged out successfully.");
+      window.location.href = "/";
+    }
+
+    async function uploadFile() {
+      const fileInput = document.getElementById("fileInput");
+      if (fileInput.files.length === 0) {
+        alert("Please select a file.");
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("file", fileInput.files[0]);
+
+      const res = await fetch("/upload", {
+        method: "POST",
+        body: formData
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        uploadedCid = data.cid;
+        const postText = document.getElementById("postText").value;
+        document.getElementById("fileInput").value = "";
+        document.getElementById("postText").value = "";
+        document.getElementById("fileName").textContent = "";
+
+        socket.emit("new_post", {
+          text: postText,
+          ipfs_cid: uploadedCid,
+          username: currentUser
+        });
+      } else {
+        alert(data.error);
+      }
+    }
+
+    async function addPost() {
+      const postText = document.getElementById("postText").value;
+
+      if (!uploadedCid && !postText) {
+        alert("Please write something or upload a media file first.");
+        return;
+      }
+
+      const res = await fetch("/add_post", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: postText,
+          ipfs_cid: uploadedCid || null
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        const blockIndex = data.block_index;
+        socket.emit("new_post", {
+          text: postText,
+          ipfs_cid: uploadedCid,
+          username: currentUser,
+          block_index: blockIndex
+        });
+
+        document.getElementById("postText").value = "";
+        uploadedCid = null;
+        document.getElementById("fileName").textContent = "";
+      } else {
+        alert(data.error);
+      }
+    }
+
+    function renderMedia(cid) {
+      if (!cid) return '';
+      const ipfsUrl = `https://gateway.pinata.cloud/ipfs/${cid}`;
+      const ext = cid.split('.').pop().toLowerCase();
+
+      if (['mp4', 'webm'].includes(ext)) {
+        return `<video src="${ipfsUrl}" controls width="300" class="img-fluid"></video>`;
+      } else if (['jpg', 'jpeg', 'png', 'gif'].includes(ext)) {
+        return `<img src="${ipfsUrl}" width="300" class="img-fluid" />`;
+      } else {
+        return `<a href="${ipfsUrl}" target="_blank" class="btn btn-link">Download File</a>`;
+      }
+    }
+
+    function handleFileChosen() {
+      const fileInput = document.getElementById("fileInput");
+      const fileNameDisplay = document.getElementById("fileName");
+      if (fileInput.files.length > 0) {
+        fileNameDisplay.textContent = fileInput.files[0].name;
+      } else {
+        fileNameDisplay.textContent = "";
+      }
+    }
+  </script>
+</body>
+</html>
